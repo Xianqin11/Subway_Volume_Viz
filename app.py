@@ -25,6 +25,9 @@ def load_data():
         
         # 3. 数据融合：将客流数据挂载到车站坐标上
         # 注意：这里假设 shp 里的站名字段叫 'NAME'，CSV里叫 'stations'
+        # 打印出地图文件到底有哪些列名
+        st.info(f"地图文件包含的列名有: {gdf_stations.columns.tolist()}")
+        merged_stations = gdf_stations.merge(df_flow, left_on='NAME', right_on='stations', how='inner')
         # 如果报错，我们需要根据你的实际字段名微调这里
         merged_stations = gdf_stations.merge(df_flow, left_on='NAME', right_on='stations', how='inner')
         
