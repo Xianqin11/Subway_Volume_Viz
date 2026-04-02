@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -22,7 +21,6 @@ def get_line_color(line_code):
     
     name = str(line_code).strip().upper()
     
-    # 包含了代号和各种中文别名，坚决不漏掉任何一根线
     exact_mapping = {
         "M1": [194, 55, 48], "1号线": [194, 55, 48], "八通线": [194, 55, 48],
         "M2": [0, 70, 147], "2号线": [0, 70, 147],
@@ -61,24 +59,7 @@ def get_line_color(line_code):
             
     return [150, 150, 150, 150]
 
-# --- 2. 注入全局 CSS 强制放大地图 ---
-st.markdown(
-    """
-    <style>
-    /* 强制拉高 PyDeck 地图容器至屏幕高度的 70% */
-    [data-testid="stDeckGlJsonChart"] {
-        height: 70vh !important;
-    }
-    /* 隐藏默认的全屏按钮，避免干扰视觉 */
-    [data-testid="StyledFullScreenButton"] {
-        display: none;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-# --- 3. 数据加载引擎 ---
+# --- 2. 数据加载引擎 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
@@ -90,7 +71,6 @@ def load_data():
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
-        # 智能盲找列
         best_col = None
         for col in gdf_lines.columns:
             if col == 'geometry': continue
@@ -113,7 +93,7 @@ def load_data():
 
 df_stations, gdf_lines = load_data()
 
-# --- 4. 地图渲染引擎 ---
+# --- 3. 地图渲染引擎 ---
 if df_stations is not None and gdf_lines is not None:
     
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
@@ -147,20 +127,20 @@ if df_stations is not None and gdf_lines is not None:
             pickable=True,
         )
 
-        view_state = pdk.ViewState(latitude=39.9, longitude=116.4, zoom=10, pitch=40)
+        # 【重点修改 1】：视角改为 pitch=0 (完全垂直的俯视 2D 视角)，并微调缩放比例
+        view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
-        # 渲染大地图
         st.pydeck_chart(pdk.Deck(
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
             tooltip={
-                "html": "<b>站点/代号:</b> {stations}{display_name} <br/> <b>数据:</b> {volume}"
+                "html": "<b>站点:</b> {stations} <br/> <b>进站量:</b> {volume} 人次"
             }
         ))
         
         # ==========================================
-        # 🖼️ 左下角：嵌入式图例 (强行吸入地图内部)
+        # 🖼️ 网页前端 UI 组件（CSS/HTML 魔法）
         # ==========================================
         def get_base64_of_bin_file(bin_file):
             try:
@@ -171,27 +151,120 @@ if df_stations is not None and gdf_lines is not None:
 
         legend_base64 = get_base64_of_bin_file(DATA_DIR / "legend.png") or get_base64_of_bin_file(DATA_DIR / "legend.jpg")
         
-        if legend_base64:
-            st.markdown(
-                f"""
-                <div style="
-                    transform: translateY(-330px); /* 向上吸入地图内部 */
-                    margin-left: 20px;
-                    position: absolute;
-                    z-index: 999;
-                    background-color: rgba(255, 255, 255, 0.85);
-                    padding: 8px;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                    backdrop-filter: blur(5px);
-                    width: fit-content;
-                    pointer-events: none; /* 鼠标可以穿透图例点击后面的地图 */
-                ">
-                    <img src="data:image/png;base64,{legend_base64}" style="max-height: 280px; object-fit: contain;">
+        # 构建 UI 界面的 HTML 字符串
+        ui_html = """
+        <style>
+        /* 强制拉高地图框架 */
+        [data-testid="stDeckGlJsonChart"] {
+            height: 70vh !important;
+        }
+        /* 隐藏地图全屏按钮，避免干扰 */
+        [data-testid="StyledFullScreenButton"] {
+            display: none;
+        }
+
+        /* ---------------- 左侧高级悬浮工具栏 ---------------- */
+        .custom-toolbar {
+            position: fixed;
+            top: 200px; /* 位于地图左侧偏上的位置 */
+            left: 40px; 
+            z-index: 99999;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .tool-btn {
+            background-color: rgba(255, 255, 255, 0.9);
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            width: 45px;
+            height: 45px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 24px;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            transition: all 0.2s;
+            text-decoration: none;
+            color: #333;
+            position: relative;
+        }
+        .tool-btn:hover {
+            background-color: #f5f5f5;
+            transform: scale(1.05);
+        }
+
+        /* 鼠标悬浮说明窗 */
+        .mouse-tooltip {
+            visibility: hidden;
+            position: absolute;
+            left: 60px; /* 在鼠标按钮的右侧弹出 */
+            top: 0;
+            background-color: rgba(255, 255, 255, 0.95);
+            color: #333;
+            padding: 15px 20px;
+            border-radius: 8px;
+            width: 280px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 14px;
+            line-height: 1.8;
+            border: 1px solid #ddd;
+            pointer-events: none; /* 防止遮挡鼠标 */
+        }
+        .tool-btn.mouse-btn:hover .mouse-tooltip {
+            visibility: visible;
+            opacity: 1;
+        }
+        </style>
+
+        <div class="custom-toolbar">
+            <a class="tool-btn" href="javascript:window.location.reload()" title="一键复原初始视角">🧭</a>
+            
+            <div class="tool-btn mouse-btn">
+                🖱️
+                <div class="mouse-tooltip">
+                    <b style="font-size: 16px;">🖱️ 地图交互说明</b><hr style="margin: 8px 0;">
+                    <span style="color:#d32f2f;">●</span> <b>左键按住拖动</b>：平移地图<br>
+                    <span style="color:#1976d2;">●</span> <b>鼠标滚轮滚动</b>：放大 / 缩小<br>
+                    <span style="color:#388e3c;">●</span> <b>右键按住拖动</b>：3D旋转 / 倾斜<br>
+                    <span style="color:#f57c00;">●</span> <b>左键点击气泡</b>：查看站点详情
                 </div>
-                """,
-                unsafe_allow_html=True
-            )
+            </div>
+        </div>
+        """
+
+        # 【重点修改 2】：如果找到了图例图片，就把它定格在右下角
+        if legend_base64:
+            ui_html += f"""
+            <style>
+            .legend-container {{
+                position: fixed;
+                bottom: 40px;
+                right: 40px; /* 挪到了屏幕右下角 */
+                z-index: 99999;
+                background-color: rgba(255, 255, 255, 0.85);
+                padding: 10px;
+                border-radius: 10px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                backdrop-filter: blur(8px);
+                pointer-events: none;
+            }}
+            .legend-container img {{
+                max-height: 280px;
+                object-fit: contain;
+            }}
+            </style>
+            <div class="legend-container">
+                <img src="data:image/png;base64,{legend_base64}">
+            </div>
+            """
+
+        # 最终将所有 UI 渲染到网页上
+        st.markdown(ui_html, unsafe_allow_html=True)
 
     except KeyError:
         st.error(f"🚨 找不到名为 '{ORIGINAL_COL}' 的列！")
