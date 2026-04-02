@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -13,24 +14,42 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
 # ==========================================
-# 🚇 终极版：工程代号 -> 官方 RGB 映射表
+# 🚇 双语全覆盖：工程代号 + 中文名 RGB 映射表
 # ==========================================
 def get_line_color(line_code):
     if pd.isna(line_code): 
-        return [150, 150, 150, 150] # 默认灰色
+        return [150, 150, 150, 150]
     
     name = str(line_code).strip().upper()
     
+    # 包含了代号和各种中文别名，坚决不漏掉任何一根线
     exact_mapping = {
-        "M1": [194, 55, 48], "M2": [0, 70, 147], "M3": [227, 27, 35],
-        "M4": [0, 172, 163], "M5": [166, 33, 127], "M6": [237, 157, 0],
-        "M7": [255, 199, 44], "M8": [0, 158, 78], "M9": [153, 204, 0],
-        "M10": [0, 158, 224], "M11": [237, 121, 107], "M12": [199, 107, 0],
-        "M13": [255, 222, 0], "M14": [209, 139, 131], "M15": [106, 53, 125],
-        "M16": [96, 176, 66], "M17": [0, 171, 171], "M19": [211, 163, 201],
-        "FS": [237, 125, 49], "CP": [231, 131, 183], "YZ": [237, 0, 140],
-        "S1": [170, 102, 34], "XJ": [227, 27, 35], "YZT1": [227, 27, 35],
-        "JC": [153, 136, 166], "DXJC": [0, 70, 147]
+        "M1": [194, 55, 48], "1号线": [194, 55, 48], "八通线": [194, 55, 48],
+        "M2": [0, 70, 147], "2号线": [0, 70, 147],
+        "M3": [227, 27, 35], "3号线": [227, 27, 35],
+        "M4": [0, 172, 163], "4号线": [0, 172, 163], "大兴线": [0, 172, 163],
+        "M5": [166, 33, 127], "5号线": [166, 33, 127],
+        "M6": [237, 157, 0], "6号线": [237, 157, 0],
+        "M7": [255, 199, 44], "7号线": [255, 199, 44],
+        "M8": [0, 158, 78], "8号线": [0, 158, 78],
+        "M9": [153, 204, 0], "9号线": [153, 204, 0],
+        "M10": [0, 158, 224], "10号线": [0, 158, 224],
+        "M11": [237, 121, 107], "11号线": [237, 121, 107],
+        "M12": [199, 107, 0], "12号线": [199, 107, 0],
+        "M13": [255, 222, 0], "13号线": [255, 222, 0],
+        "M14": [209, 139, 131], "14号线": [209, 139, 131],
+        "M15": [106, 53, 125], "15号线": [106, 53, 125],
+        "M16": [96, 176, 66], "16号线": [96, 176, 66],
+        "M17": [0, 171, 171], "17号线": [0, 171, 171],
+        "M19": [211, 163, 201], "19号线": [211, 163, 201],
+        "FS": [237, 125, 49], "房山线": [237, 125, 49], "燕房线": [237, 125, 49],
+        "CP": [231, 131, 183], "昌平线": [231, 131, 183],
+        "YZ": [237, 0, 140], "亦庄线": [237, 0, 140],
+        "S1": [170, 102, 34], "S1线": [170, 102, 34],
+        "XJ": [227, 27, 35], "西郊线": [227, 27, 35],
+        "YZT1": [227, 27, 35], "T1线": [227, 27, 35],
+        "JC": [153, 136, 166], "首都机场": [153, 136, 166], "机场线": [153, 136, 166],
+        "DXJC": [0, 70, 147], "大兴机场": [0, 70, 147], "新机场": [0, 70, 147]
     }
     
     if name in exact_mapping:
@@ -42,7 +61,24 @@ def get_line_color(line_code):
             
     return [150, 150, 150, 150]
 
-# --- 2. 数据加载引擎 ---
+# --- 2. 注入全局 CSS 强制放大地图 ---
+st.markdown(
+    """
+    <style>
+    /* 强制拉高 PyDeck 地图容器至屏幕高度的 70% */
+    [data-testid="stDeckGlJsonChart"] {
+        height: 70vh !important;
+    }
+    /* 隐藏默认的全屏按钮，避免干扰视觉 */
+    [data-testid="StyledFullScreenButton"] {
+        display: none;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- 3. 数据加载引擎 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
@@ -54,15 +90,11 @@ def load_data():
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
-        # 💥 智能盲找黑科技：不管列名叫啥，直接搜数据！
+        # 智能盲找列
         best_col = None
         for col in gdf_lines.columns:
             if col == 'geometry': continue
-            
-            # 让每一列都去试一下能不能找到颜色
             test_colors = gdf_lines[col].apply(get_line_color)
-            
-            # 只要有一列成功匹配上颜色（而不是全是灰色），就是找对列了！
             if test_colors.apply(lambda c: c != [150, 150, 150, 150]).any():
                 best_col = col
                 gdf_lines['color'] = test_colors
@@ -71,26 +103,19 @@ def load_data():
         if best_col:
             gdf_lines['display_name'] = gdf_lines[best_col].astype(str)
         else:
-            # 万一连盲找都失败了（说明文件里根本没有 M1 这种字眼），就给深灰色报错
             gdf_lines['color'] = pd.Series([[100, 100, 100, 200]] * len(gdf_lines))
-            gdf_lines['display_name'] = "无法识别代号"
+            gdf_lines['display_name'] = "未知代号"
             
-        return merged_stations, gdf_lines, best_col
+        return merged_stations, gdf_lines
     except Exception as e:
         st.error(f"数据加载出错啦: {e}")
-        return None, None, None
+        return None, None
 
-df_stations, gdf_lines, found_line_col = load_data()
+df_stations, gdf_lines = load_data()
 
-# --- 3. 地图渲染引擎 ---
+# --- 4. 地图渲染引擎 ---
 if df_stations is not None and gdf_lines is not None:
     
-    # 在网页最上方播报侦察结果
-    if found_line_col:
-        st.success(f"🎉 大获全胜！智能算法在地图的 [{found_line_col}] 列中精准找到了 M1、M2 等代号，并已全面涂装！")
-    else:
-        st.warning("⚠️ 破案失败：算法翻遍了所有数据，也没找到 M1、M2 等代号，最后只能全部涂成灰色。")
-
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
     SAFE_COL = 'volume'
     
@@ -124,16 +149,19 @@ if df_stations is not None and gdf_lines is not None:
 
         view_state = pdk.ViewState(latitude=39.9, longitude=116.4, zoom=10, pitch=40)
 
+        # 渲染大地图
         st.pydeck_chart(pdk.Deck(
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
             tooltip={
-                "html": "<b>站点:</b> {stations} <br/> <b>代号:</b> {display_name} <br/> <b>数据:</b> {volume}"
+                "html": "<b>站点/代号:</b> {stations}{display_name} <br/> <b>数据:</b> {volume}"
             }
         ))
         
-        # 左下角图例模块
+        # ==========================================
+        # 🖼️ 左下角：嵌入式图例 (强行吸入地图内部)
+        # ==========================================
         def get_base64_of_bin_file(bin_file):
             try:
                 with open(bin_file, 'rb') as f:
@@ -146,17 +174,23 @@ if df_stations is not None and gdf_lines is not None:
         if legend_base64:
             st.markdown(
                 f"""
-                <style>
-                .legend-container {{
-                    position: fixed; bottom: 30px; left: 30px; z-index: 99999;
-                    background-color: rgba(255, 255, 255, 0.85); padding: 8px;
-                    border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                <div style="
+                    transform: translateY(-330px); /* 向上吸入地图内部 */
+                    margin-left: 20px;
+                    position: absolute;
+                    z-index: 999;
+                    background-color: rgba(255, 255, 255, 0.85);
+                    padding: 8px;
+                    border-radius: 8px;
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                     backdrop-filter: blur(5px);
-                }}
-                .legend-container img {{ max-height: 350px; object-fit: contain; }}
-                </style>
-                <div class="legend-container"><img src="data:image/png;base64,{legend_base64}"></div>
-                """, unsafe_allow_html=True
+                    width: fit-content;
+                    pointer-events: none; /* 鼠标可以穿透图例点击后面的地图 */
+                ">
+                    <img src="data:image/png;base64,{legend_base64}" style="max-height: 280px; object-fit: contain;">
+                </div>
+                """,
+                unsafe_allow_html=True
             )
 
     except KeyError:
