@@ -21,7 +21,6 @@ def get_line_color(line_code):
     
     name = str(line_code).strip().upper()
     
-    # 包含了代号和各种中文别名，坚决不漏掉任何一根线
     exact_mapping = {
         "M1": [194, 55, 48], "1号线": [194, 55, 48], "八通线": [194, 55, 48],
         "M2": [0, 70, 147], "2号线": [0, 70, 147],
@@ -60,18 +59,12 @@ def get_line_color(line_code):
             
     return [150, 150, 150, 150]
 
-# --- 2. 注入全局 CSS 强制放大地图 ---
+# --- 2. 注入全局 CSS ---
 st.markdown(
     """
     <style>
-    /* 强制拉高 PyDeck 地图容器至屏幕高度的 70% */
-    [data-testid="stDeckGlJsonChart"] {
-        height: 70vh !important;
-    }
-    /* 隐藏默认的全屏按钮，避免干扰视觉 */
-    [data-testid="StyledFullScreenButton"] {
-        display: none;
-    }
+    [data-testid="stDeckGlJsonChart"] { height: 70vh !important; }
+    [data-testid="StyledFullScreenButton"] { display: none; }
     </style>
     """,
     unsafe_allow_html=True
@@ -99,11 +92,8 @@ def load_data():
                 gdf_lines['color'] = test_colors
                 break
                 
-        if best_col:
-            gdf_lines['display_name'] = gdf_lines[best_col].astype(str)
-        else:
+        if not best_col:
             gdf_lines['color'] = pd.Series([[100, 100, 100, 200]] * len(gdf_lines))
-            gdf_lines['display_name'] = "未知代号"
             
         return merged_stations, gdf_lines
     except Exception as e:
@@ -121,6 +111,19 @@ if df_stations is not None and gdf_lines is not None:
     try:
         df_stations = df_stations.rename(columns={ORIGINAL_COL: SAFE_COL})
         df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
+        
+        # 💥 智能提取多条线路并优雅拼接
+        def combine_lines(row):
+            lines = []
+            for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+                if col in row and pd.notna(row[col]):
+                    val = str(row[col]).strip()
+                    if val and val.lower() != 'nan':
+                        lines.append(val)
+            return "、".join(lines) if lines else "未知线路"
+
+        df_stations['所属线路'] = df_stations.apply(combine_lines, axis=1)
+        df_stations['区县'] = df_stations['区县'].fillna('未知区县')
         
         df_stations['color'] = df_stations[SAFE_COL].apply(
             lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
@@ -146,23 +149,18 @@ if df_stations is not None and gdf_lines is not None:
             pickable=True,
         )
 
-        # 【重点修改 1】：视角改为 pitch=0 (2D正上方)，微调中心点
         view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
-        # 渲染大地图
         st.pydeck_chart(pdk.Deck(
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
-            # 【附加修复】：去掉了 {display_name} 从而彻底消灭乱码，只显示站名和客流量
+            # 🎯 悬浮窗直接调用完美拼接好的“所属线路”
             tooltip={
-                "html": "<b>站点:</b> {stations} <br/> <b>进站量:</b> {volume} 人次"
+                "html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"
             }
         ))
         
-        # ==========================================
-        # 🖼️ 左下角：固定位置图例
-        # ==========================================
         def get_base64_of_bin_file(bin_file):
             try:
                 with open(bin_file, 'rb') as f:
@@ -179,14 +177,14 @@ if df_stations is not None and gdf_lines is not None:
                 .legend-container {{
                     position: fixed;
                     bottom: 40px;
-                    left: 40px; /* 【重点修改 2】：死死钉在左下角 */
+                    left: 40px; 
                     z-index: 99999;
                     background-color: rgba(255, 255, 255, 0.85);
                     padding: 8px;
                     border-radius: 8px;
                     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                     backdrop-filter: blur(5px);
-                    pointer-events: none; /* 鼠标穿透，不影响点击后面的地图 */
+                    pointer-events: none;
                 }}
                 .legend-container img {{
                     max-height: 280px; 
