@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -56,24 +55,31 @@ def get_line_color(line_code):
         if key in name: return exact_mapping[key] + [255]
     return [150, 150, 150, 150]
 
-# --- 2. 注入全局 CSS 强制放大地图 (60vh 黄金比例) ---
+# --- 2. 注入全局 CSS 强制放大地图 ---
 st.markdown(
     """
     <style>
     [data-testid="stDeckGlJsonChart"] { height: 60vh !important; } 
     [data-testid="StyledFullScreenButton"] { display: none; }
+    /* 美化文件上传框 */
+    [data-testid="stFileUploadDropzone"] { border: 2px dashed #009EE0; background-color: #f0f8ff; }
     </style>
     """, 
     unsafe_allow_html=True
 )
 
-# --- 3. 数据加载引擎 ---
-@st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
-def load_data():
+# --- 3. 核心加载引擎：支持外部文件接入 ---
+@st.cache_data(show_spinner="正在解析空间与客流数据，请稍候...")
+def load_all_data(excel_file_path_or_buffer):
     try:
-        df_flow = pd.read_excel(DATA_DIR / "flow_static.xlsx")
+        # 支持读取上传的内存文件或本地路径
+        df_flow = pd.read_excel(excel_file_path_or_buffer)
         gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp", encoding='utf-8').to_crs(epsg=4326)
         gdf_lines = gpd.read_file(DATA_DIR / "2025年底-线路909km-现状.shp", encoding='utf-8').to_crs(epsg=4326)
+        
+        # 将站名转为字符串以便匹配
+        df_flow['stations'] = df_flow['stations'].astype(str).str.strip()
+        gdf_stations['站点'] = gdf_stations['站点'].astype(str).str.strip()
         
         merged_stations = gdf_stations.merge(df_flow, left_on='站点', right_on='stations', how='inner')
         merged_stations['lon'] = merged_stations.geometry.x
@@ -88,17 +94,51 @@ def load_data():
                 break
         return merged_stations, gdf_lines, best_col
     except Exception as e:
-        st.error(f"数据加载出错啦: {e}")
+        st.error(f"🚨 数据合并出错啦，请检查上传的 Excel 是否包含 'stations' 列！详细报错: {e}")
         return None, None, None
 
-df_stations, gdf_lines_cached, line_name_col = load_data()
 
-# --- 4. 核心渲染与分析逻辑 ---
-if df_stations is not None and gdf_lines_cached is not None:
-    ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
-    SAFE_COL = 'volume'
+# ==========================================
+# 🎛️ 左侧边栏：文件上传与交互控制台
+# ==========================================
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Beijing_Subway_logo.svg/200px-Beijing_Subway_logo.svg.png", width=60)
     
-    df_stations = df_stations.rename(columns={ORIGINAL_COL: SAFE_COL})
+    st.header("📂 1. 更新数据源")
+    # 允许用户上传新文件
+    uploaded_file = st.file_uploader("上传最新客流数据 (Excel格式)", type=["xlsx", "xls"])
+    
+    if uploaded_file is not None:
+        st.success(f"✅ 成功加载外部数据: {uploaded_file.name}")
+        data_source = uploaded_file
+    else:
+        st.info("💡 当前正在使用系统内置的历史数据。可随时上传新 Excel 替换。")
+        data_source = DATA_DIR / "flow_static.xlsx"
+        
+    st.markdown("---")
+    st.header("🎛️ 2. 空间数据过滤")
+
+# --- 拦截数据流，开始渲染 ---
+df_stations, gdf_lines_cached, line_name_col = load_all_data(data_source)
+
+if df_stations is not None and gdf_lines_cached is not None:
+    
+    # 💥 AI 智能表头嗅探器：不再写死列名，自动寻找客流量列！
+    SAFE_COL = 'volume'
+    target_flow_col = None
+    
+    # 遍历所有列，找包含“全日进站”或者“进站”的列
+    for col in df_stations.columns:
+        if "全日进站" in col or ("进站" in col and "万人次" in col) or col == '2025年2月25日工作日全日进站（万人次）':
+            target_flow_col = col
+            break
+            
+    if not target_flow_col:
+        st.error("🚨 在上传的数据表中，没有找到包含『全日进站』字眼的客流量列！请检查表头。")
+        st.stop()
+        
+    # 重命名为安全列名，方便后续处理
+    df_stations = df_stations.rename(columns={target_flow_col: SAFE_COL})
     df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
     
     def combine_lines(row):
@@ -107,16 +147,14 @@ if df_stations is not None and gdf_lines_cached is not None:
         return "、".join(lines) if lines else "未知线路"
 
     df_stations['所属线路'] = df_stations.apply(combine_lines, axis=1)
-    df_stations['区县'] = df_stations['区县'].fillna('未知区县')
+    # 处理区县如果不存在或缺失的情况
+    if '区县' not in df_stations.columns:
+        df_stations['区县'] = '未知区县'
+    else:
+        df_stations['区县'] = df_stations['区县'].fillna('未知区县')
     
-    # ==========================================
-    # 🎛️ 左侧边栏：交互控制台 + 级联筛选
-    # ==========================================
+    # --- 侧边栏联动筛选逻辑 ---
     with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Beijing_Subway_logo.svg/200px-Beijing_Subway_logo.svg.png", width=60)
-        st.header("🎛️ 数据筛选控制台")
-        
-        # --- 获取全部线路列表 ---
         all_station_lines = set()
         for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
             if col in df_stations.columns:
@@ -124,11 +162,8 @@ if df_stations is not None and gdf_lines_cached is not None:
                     if val and val.lower() != 'nan' and '未知' not in val:
                         all_station_lines.add(val.strip())
         
-        # 1. 线路多选框
         selected_lines = st.multiselect("🚇 按路线筛选", options=sorted(list(all_station_lines)), default=[])
 
-        # --- 💥 核心黑科技：动态提取可用站点 ---
-        # 如果选了线路，就只把这些线路上的站点提取出来；如果没选线路，就提取所有站点。
         if selected_lines:
             mask_for_stations = pd.Series(False, index=df_stations.index)
             for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
@@ -138,26 +173,22 @@ if df_stations is not None and gdf_lines_cached is not None:
         else:
             available_stations = df_stations['stations'].dropna().unique().tolist()
             
-        # 2. 站点多选框 (随线路动态更新！)
         selected_stations = st.multiselect(
             "📍 按站点筛选 (支持多选)", 
             options=sorted(available_stations), 
             default=[],
-            help="你可以先在上面选择线路缩小范围，然后在这里选择具体的站点。"
+            help="先选上方线路缩小范围，再在此精确选站。"
         )
 
         # ------------------------------------------
         # 🧠 智能数据分析引擎
         # ------------------------------------------
         st.markdown("---")
-        st.header("🧠 智能数据分析")
+        st.header("🧠 3. 智能数据报告")
         
-        # === 综合筛选逻辑 ===
-        # 建立一个全为 True 的初始过滤网
         final_mask = pd.Series(True, index=df_stations.index)
         is_filtered = False
         
-        # 过滤线路
         if selected_lines:
             line_mask = pd.Series(False, index=df_stations.index)
             for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
@@ -166,13 +197,11 @@ if df_stations is not None and gdf_lines_cached is not None:
             final_mask = final_mask & line_mask
             is_filtered = True
             
-        # 过滤站点
         if selected_stations:
             station_mask = df_stations['stations'].isin(selected_stations)
             final_mask = final_mask & station_mask
             is_filtered = True
 
-        # 生成最终被选中的数据
         ana_df = df_stations[final_mask] if is_filtered else df_stations
             
         if not ana_df.empty:
@@ -181,15 +210,14 @@ if df_stations is not None and gdf_lines_cached is not None:
             
             col1, col2 = st.columns(2)
             col1.metric("总进站量", f"{total_vol:,.0f}")
-            col2.metric("最挤站点", f"{max_row['stations']}")
+            col2.metric("最高峰站点", f"{max_row['stations']}")
             
-            st.info(f"💡 **数据洞察**：\n当前共展示 **{len(ana_df)}** 个站点。客流最高峰出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
+            # 使用动态探测出来的原列名，展示给用户看，更显得专业
+            st.info(f"💡 **AI 数据总结**：\n共检索到 **{len(ana_df)}** 个站点。\n分析字段：*{target_flow_col}*。\n客流极值出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站 **{max_row[SAFE_COL]:,.0f}** 人次。")
             
-            # 🎨 百变高级图表
             if HAS_PLOTLY:
                 chart_style = st.selectbox("🎨 图表样式切换", ["📊 柱状图", "🍩 圈状图", "🥧 饼状图", "🕸️ 雷达图"])
                 
-                # 如果选中的站少于10个，就显示实际数量，否则显示TOP10
                 top_n = min(10, len(ana_df))
                 top_df = ana_df.nlargest(top_n, SAFE_COL).sort_values(by=SAFE_COL, ascending=True).copy()
                 district_df = ana_df.groupby('区县')[SAFE_COL].sum().reset_index()
@@ -205,25 +233,18 @@ if df_stations is not None and gdf_lines_cached is not None:
                         fig = px.line_polar(df, r=value_col, theta=name_col, line_close=True, title=title)
                         fig.update_traces(fill='toself', line_color=color_theme)
                     
-                    fig.update_layout(
-                        margin=dict(l=10, r=10, t=40, b=10), 
-                        paper_bgcolor="rgba(0,0,0,0)", 
-                        plot_bgcolor="rgba(0,0,0,0)",
-                        title_font_size=14
-                    )
+                    fig.update_layout(margin=dict(l=10, r=10, t=40, b=10), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", title_font_size=14)
                     st.plotly_chart(fig, use_container_width=True)
 
                 st.markdown("---")
                 render_chart(top_df, 'stations', SAFE_COL, f"📈 客流 TOP {top_n} 站点", "#ff4b4b")
                 render_chart(district_df, '区县', SAFE_COL, "🏙️ 区县分布热度", "#009EE0")
-
             else:
-                st.warning("🚀 正在等待服务器部署 plotly 高级图表库...")
-                st.info("💡 提示：如果您刚刚在 requirements.txt 中添加了 plotly，请耐心等待1-2分钟后刷新网页。")
+                st.warning("正在等待图表库加载...")
                 st.bar_chart(ana_df.nlargest(10, SAFE_COL)[['stations', SAFE_COL]].set_index('stations'), color="#ff4b4b")
 
         else:
-            st.warning("所选线路暂无数据。")
+            st.warning("所选范围内暂无数据。")
 
     # ==========================================
     # 🔍 空间关联渲染
@@ -252,7 +273,6 @@ if df_stations is not None and gdf_lines_cached is not None:
             if "大兴线" in sl_upper and name == "M4": return True
         return False
 
-    # 地图线条颜色：根据线路筛选而定
     if selected_lines and line_name_col:
         render_lines['color'] = render_lines[line_name_col].apply(
             lambda x: get_line_color(x) if is_line_selected(x, selected_lines) else [200, 200, 200, 50]
@@ -260,26 +280,22 @@ if df_stations is not None and gdf_lines_cached is not None:
     else:
         render_lines['color'] = render_lines[line_name_col].apply(get_line_color) if line_name_col else pd.Series([[100, 100, 100, 200]] * len(render_lines))
 
-    # 气泡渲染：使用我们刚才双重过滤后的 ana_df
     filtered_stations = ana_df.copy() 
     filtered_stations['color'] = filtered_stations[SAFE_COL].apply(
         lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
     )
 
-    st.title("🚇 轨道站点客流与线路可视化")
+    st.title("🚇 轨道站点客流与空间分析引擎")
     
     layer_lines = pdk.Layer("GeoJsonLayer", render_lines, get_line_color="color", get_line_width=25, line_width_min_pixels=3, pickable=True)
     layer_stations = pdk.Layer("ScatterplotLayer", filtered_stations, get_position=["lon", "lat"], get_color="color", get_radius=SAFE_COL, radius_scale=0.02, radius_min_pixels=3, pickable=True)
-    
-    # 智能视角缩放：如果只选了一个站，可以自动聚焦过去，如果不选就看全图
     view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
     st.pydeck_chart(pdk.Deck(
         layers=[layer_lines, layer_stations], initial_view_state=view_state, map_style="light", 
-        tooltip={"html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"}
+        tooltip={"html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 客流量:</b> {volume} 人次"}
     ))
     
-    # 🖼️ 左下角图例固定
     def get_base64_of_bin_file(bin_file):
         try:
             with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
