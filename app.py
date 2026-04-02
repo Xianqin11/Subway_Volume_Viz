@@ -42,19 +42,24 @@ if df_stations is not None and gdf_lines is not None:
     # 成功提示
     st.success(f"🎉 成功拼接了 {len(df_stations)} 个站点的数据！")
     
-    # 真正的客流字段暗号
-    VOLUME_COL = '2025年2月25日工作日全日进站（万人次）'
+    # 原始的中文名字（带有数字，网页前端不认识）
+    ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
+    # 安全的英文名字（骗过网页浏览器）
+    SAFE_COL = 'volume'
     
     try:
+        # 【关键魔术】：在代码里把带数字的名字，临时改成安全的英文名字
+        df_stations = df_stations.rename(columns={ORIGINAL_COL: SAFE_COL})
+        
         # 强行把客流数据转为数字
-        df_stations[VOLUME_COL] = pd.to_numeric(df_stations[VOLUME_COL], errors='coerce').fillna(0)
+        df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
         
         # 动态颜色：单位是万人次，大于5万人次显示红色，否则绿色
-        df_stations['color'] = df_stations[VOLUME_COL].apply(
+        df_stations['color'] = df_stations[SAFE_COL].apply(
             lambda x: [255, 50, 50, 200] if x > 5 else [50, 200, 50, 200]
         )
 
-        # 线路图层 (注意看这里，中括号是完整闭合的)
+        # 线路图层
         layer_lines = pdk.Layer(
             "GeoJsonLayer",
             gdf_lines,
@@ -69,8 +74,8 @@ if df_stations is not None and gdf_lines is not None:
             df_stations,
             get_position=["lon", "lat"],
             get_color="color",
-            get_radius=VOLUME_COL,
-            radius_scale=200,  # 放大比例，适配万人次
+            get_radius=SAFE_COL,   # 这里使用安全的英文名
+            radius_scale=200,      # 放大比例，适配万人次
             radius_min_pixels=3,
             pickable=True,
         )
@@ -83,8 +88,9 @@ if df_stations is not None and gdf_lines is not None:
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
-            tooltip={"html": f"<b>{{stations}}</b><br/>进站量: {{{VOLUME_COL}}} 万人次"}
+            # 悬浮提示框也使用安全的英文名
+            tooltip={"html": f"<b>{{stations}}</b><br/>进站量: {{{SAFE_COL}}} 万人次"}
         ))
         
     except KeyError:
-        st.error(f"🚨 找不到名为 '{VOLUME_COL}' 的列！")
+        st.error(f"🚨 找不到名为 '{ORIGINAL_COL}' 的列！")
