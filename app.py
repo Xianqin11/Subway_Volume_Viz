@@ -146,20 +146,22 @@ if df_stations is not None and gdf_lines is not None:
             pickable=True,
         )
 
-        view_state = pdk.ViewState(latitude=39.9, longitude=116.4, zoom=10, pitch=40)
+        # 【重点修改 1】：视角改为 pitch=0 (2D正上方)，微调中心点
+        view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
         # 渲染大地图
         st.pydeck_chart(pdk.Deck(
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
+            # 【附加修复】：去掉了 {display_name} 从而彻底消灭乱码，只显示站名和客流量
             tooltip={
-                "html": "<b>站点/代号:</b> {stations}{display_name} <br/> <b>数据:</b> {volume}"
+                "html": "<b>站点:</b> {stations} <br/> <b>进站量:</b> {volume} 人次"
             }
         ))
         
         # ==========================================
-        # 🖼️ 左下角：嵌入式图例 (强行吸入地图内部)
+        # 🖼️ 左下角：固定位置图例
         # ==========================================
         def get_base64_of_bin_file(bin_file):
             try:
@@ -173,20 +175,26 @@ if df_stations is not None and gdf_lines is not None:
         if legend_base64:
             st.markdown(
                 f"""
-                <div style="
-                    transform: translateY(-330px); /* 向上吸入地图内部 */
-                    margin-left: 20px;
-                    position: absolute;
-                    z-index: 999;
+                <style>
+                .legend-container {{
+                    position: fixed;
+                    bottom: 40px;
+                    left: 40px; /* 【重点修改 2】：死死钉在左下角 */
+                    z-index: 99999;
                     background-color: rgba(255, 255, 255, 0.85);
                     padding: 8px;
                     border-radius: 8px;
                     box-shadow: 0 4px 12px rgba(0,0,0,0.15);
                     backdrop-filter: blur(5px);
-                    width: fit-content;
-                    pointer-events: none; /* 鼠标可以穿透图例点击后面的地图 */
-                ">
-                    <img src="data:image/png;base64,{legend_base64}" style="max-height: 280px; object-fit: contain;">
+                    pointer-events: none; /* 鼠标穿透，不影响点击后面的地图 */
+                }}
+                .legend-container img {{
+                    max-height: 280px; 
+                    object-fit: contain;
+                }}
+                </style>
+                <div class="legend-container">
+                    <img src="data:image/png;base64,{legend_base64}">
                 </div>
                 """,
                 unsafe_allow_html=True
