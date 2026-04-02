@@ -15,16 +15,12 @@ DATA_DIR = BASE_DIR / "data"
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
-        # 1. 加载客流数据
+        # 加载数据
         df_flow = pd.read_excel(DATA_DIR / "flow_static.xlsx")
-        
-        # 2. 加载地理数据 
-        # 【关键修复】：加上 encoding='utf-8'，彻底消灭火星文乱码！
         gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp", encoding='utf-8').to_crs(epsg=4326)
         gdf_lines = gpd.read_file(DATA_DIR / "2025年底-线路909km-现状.shp", encoding='utf-8').to_crs(epsg=4326)
         
-        # 3. 数据融合
-        # 【关键修复】：暗号终于对上了！使用 '站点' 进行匹配
+        # 数据融合
         merged_stations = gdf_stations.merge(df_flow, left_on='站点', right_on='stations', how='inner')
         
         # 提取经纬度
@@ -41,39 +37,51 @@ df_stations, gdf_lines = load_data()
 # --- 3. 地图渲染引擎 ---
 if df_stations is not None and gdf_lines is not None:
     
-    # 动态颜色：客流大于 50000 变红，否则为绿色
-    df_stations['color'] = df_stations['2025年2月25日进站量'].apply(
-        lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
-    )
+    # 💥 终极侦察兵：看看我们成功匹配了多少个站，以及真正拥有的列名！
+    st.success(f"🎉 成功拼接了 {len(df_stations)} 个站点的数据！")
+    st.info(f"👉 真实的列名有：{df_stations.columns.tolist()}")
+    
+    # ========================================================
+    # 【最后一步】：把下面这个词，换成上面蓝框里真正代表进站量的词！
+    # 比如如果它叫 '进站量'，就把它改成 VOLUME_COL = '进站量'
+    # ========================================================
+    VOLUME_COL = '2025年2月25日进站量'
+    
+    try:
+        # 强行把客流数据转为数字，防止里面有乱码报错
+        df_stations[VOLUME_COL] = pd.to_numeric(df_stations[VOLUME_COL], errors='coerce').fillna(0)
+        
+        # 动态颜色：客流大于 50000 变红，否则为绿色
+        df_stations['color'] = df_stations[VOLUME_COL].apply(
+            lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
+        )
 
-    # 图层 1：线路底图
-    layer_lines = pdk.Layer(
-        "GeoJsonLayer",
-        gdf_lines,
-        get_line_color=[100, 150, 250, 150],
-        get_line_width=20,
-        line_width_min_pixels=2,
-    )
+        layer_lines = pdk.Layer(
+            "GeoJsonLayer",
+            gdf_lines,
+            get_line_color=[100, 150, 250, 150],
+            get_line_width=20,
+            line_width_min_pixels=2,
+        )
 
-    # 图层 2：站点气泡图
-    layer_stations = pdk.Layer(
-        "ScatterplotLayer",
-        df_stations,
-        get_position=["lon", "lat"],
-        get_color="color",
-        get_radius="2025年2月25日进站量",
-        radius_scale=0.03,  # 控制气泡缩放比例
-        pickable=True,
-    )
+        layer_stations = pdk.Layer(
+            "ScatterplotLayer",
+            df_stations,
+            get_position=["lon", "lat"],
+            get_color="color",
+            get_radius=VOLUME_COL,
+            radius_scale=0.03,  # 控制气泡缩放比例
+            pickable=True,
+        )
 
-    # 设置地图初始视角 (北京中心)
-    view_state = pdk.ViewState(latitude=39.9, longitude=116.4, zoom=10, pitch=40)
+        view_state = pdk.ViewState(latitude=39.9, longitude=116.4, zoom=10, pitch=40)
 
-    # 渲染出图
-    st.pydeck_chart(pdk.Deck(
-        layers=[layer_lines, layer_stations],
-        initial_view_state=view_state,
-        map_style="light", 
-        # 这里的悬浮提示框也会正确显示中文了！
-        tooltip={"html": "<b>{stations}</b><br/>进站量: {2025年2月25日进站量} 人次"}
-    ))
+        st.pydeck_chart(pdk.Deck(
+            layers=[layer_lines, layer_stations],
+            initial_view_state=view_state,
+            map_style="light", 
+            tooltip={"html": f"<b>{{stations}}</b><br/>进站量: {{{VOLUME_COL}}} 人次"}
+        ))
+        
+    except KeyError:
+        st.error(f"🚨 找不到名为 '{VOLUME_COL}' 的列！请看上方蓝框，把代码里的 VOLUME_COL 换成正确的名字。")
