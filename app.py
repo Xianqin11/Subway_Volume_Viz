@@ -17,7 +17,7 @@ DATA_DIR = BASE_DIR / "data"
 def load_data():
     try:
         # 1. 加载客流数据 (读取你改好后缀的 Excel 文件)
-        df_flow = pd.read_excel(DATA_DIR / "flow_static.csv", engine="openpyxl")
+       df_flow = pd.read_excel(DATA_DIR / "flow_static.xlsx")
         
         # 2. 加载地理数据，并统一转换坐标系为高德/Pydeck支持的 WGS84 (EPSG:4326)
         gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp").to_crs(epsg=4326)
