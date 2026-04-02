@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 import geopandas as gpd
@@ -109,12 +110,13 @@ if df_stations is not None and gdf_lines_cached is not None:
     df_stations['区县'] = df_stations['区县'].fillna('未知区县')
     
     # ==========================================
-    # 🎛️ 左侧边栏：交互控制台 + 智能数据分析
+    # 🎛️ 左侧边栏：交互控制台 + 级联筛选
     # ==========================================
     with st.sidebar:
         st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Beijing_Subway_logo.svg/200px-Beijing_Subway_logo.svg.png", width=60)
-        st.header("🎛️ 数据控制台")
+        st.header("🎛️ 数据筛选控制台")
         
+        # --- 获取全部线路列表 ---
         all_station_lines = set()
         for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
             if col in df_stations.columns:
@@ -122,7 +124,27 @@ if df_stations is not None and gdf_lines_cached is not None:
                     if val and val.lower() != 'nan' and '未知' not in val:
                         all_station_lines.add(val.strip())
         
+        # 1. 线路多选框
         selected_lines = st.multiselect("🚇 按路线筛选", options=sorted(list(all_station_lines)), default=[])
+
+        # --- 💥 核心黑科技：动态提取可用站点 ---
+        # 如果选了线路，就只把这些线路上的站点提取出来；如果没选线路，就提取所有站点。
+        if selected_lines:
+            mask_for_stations = pd.Series(False, index=df_stations.index)
+            for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+                if col in df_stations.columns:
+                    mask_for_stations = mask_for_stations | df_stations[col].isin(selected_lines)
+            available_stations = df_stations[mask_for_stations]['stations'].dropna().unique().tolist()
+        else:
+            available_stations = df_stations['stations'].dropna().unique().tolist()
+            
+        # 2. 站点多选框 (随线路动态更新！)
+        selected_stations = st.multiselect(
+            "📍 按站点筛选 (支持多选)", 
+            options=sorted(available_stations), 
+            default=[],
+            help="你可以先在上面选择线路缩小范围，然后在这里选择具体的站点。"
+        )
 
         # ------------------------------------------
         # 🧠 智能数据分析引擎
@@ -130,14 +152,28 @@ if df_stations is not None and gdf_lines_cached is not None:
         st.markdown("---")
         st.header("🧠 智能数据分析")
         
+        # === 综合筛选逻辑 ===
+        # 建立一个全为 True 的初始过滤网
+        final_mask = pd.Series(True, index=df_stations.index)
+        is_filtered = False
+        
+        # 过滤线路
         if selected_lines:
-            mask = pd.Series(False, index=df_stations.index)
+            line_mask = pd.Series(False, index=df_stations.index)
             for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
                 if col in df_stations.columns:
-                    mask = mask | df_stations[col].isin(selected_lines)
-            ana_df = df_stations[mask]
-        else:
-            ana_df = df_stations
+                    line_mask = line_mask | df_stations[col].isin(selected_lines)
+            final_mask = final_mask & line_mask
+            is_filtered = True
+            
+        # 过滤站点
+        if selected_stations:
+            station_mask = df_stations['stations'].isin(selected_stations)
+            final_mask = final_mask & station_mask
+            is_filtered = True
+
+        # 生成最终被选中的数据
+        ana_df = df_stations[final_mask] if is_filtered else df_stations
             
         if not ana_df.empty:
             total_vol = ana_df[SAFE_COL].sum()
@@ -147,13 +183,15 @@ if df_stations is not None and gdf_lines_cached is not None:
             col1.metric("总进站量", f"{total_vol:,.0f}")
             col2.metric("最挤站点", f"{max_row['stations']}")
             
-            st.info(f"💡 **数据洞察**：\n当前共分析 **{len(ana_df)}** 个站点。客流最高峰出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
+            st.info(f"💡 **数据洞察**：\n当前共展示 **{len(ana_df)}** 个站点。客流最高峰出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
             
             # 🎨 百变高级图表
             if HAS_PLOTLY:
                 chart_style = st.selectbox("🎨 图表样式切换", ["📊 柱状图", "🍩 圈状图", "🥧 饼状图", "🕸️ 雷达图"])
                 
-                top10_df = ana_df.nlargest(10, SAFE_COL).sort_values(by=SAFE_COL, ascending=True).copy()
+                # 如果选中的站少于10个，就显示实际数量，否则显示TOP10
+                top_n = min(10, len(ana_df))
+                top_df = ana_df.nlargest(top_n, SAFE_COL).sort_values(by=SAFE_COL, ascending=True).copy()
                 district_df = ana_df.groupby('区县')[SAFE_COL].sum().reset_index()
 
                 def render_chart(df, name_col, value_col, title, color_theme):
@@ -176,7 +214,7 @@ if df_stations is not None and gdf_lines_cached is not None:
                     st.plotly_chart(fig, use_container_width=True)
 
                 st.markdown("---")
-                render_chart(top10_df, 'stations', SAFE_COL, "📈 客流 TOP 10 站点", "#ff4b4b")
+                render_chart(top_df, 'stations', SAFE_COL, f"📈 客流 TOP {top_n} 站点", "#ff4b4b")
                 render_chart(district_df, '区县', SAFE_COL, "🏙️ 区县分布热度", "#009EE0")
 
             else:
@@ -214,6 +252,7 @@ if df_stations is not None and gdf_lines_cached is not None:
             if "大兴线" in sl_upper and name == "M4": return True
         return False
 
+    # 地图线条颜色：根据线路筛选而定
     if selected_lines and line_name_col:
         render_lines['color'] = render_lines[line_name_col].apply(
             lambda x: get_line_color(x) if is_line_selected(x, selected_lines) else [200, 200, 200, 50]
@@ -221,6 +260,7 @@ if df_stations is not None and gdf_lines_cached is not None:
     else:
         render_lines['color'] = render_lines[line_name_col].apply(get_line_color) if line_name_col else pd.Series([[100, 100, 100, 200]] * len(render_lines))
 
+    # 气泡渲染：使用我们刚才双重过滤后的 ana_df
     filtered_stations = ana_df.copy() 
     filtered_stations['color'] = filtered_stations[SAFE_COL].apply(
         lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
@@ -230,6 +270,8 @@ if df_stations is not None and gdf_lines_cached is not None:
     
     layer_lines = pdk.Layer("GeoJsonLayer", render_lines, get_line_color="color", get_line_width=25, line_width_min_pixels=3, pickable=True)
     layer_stations = pdk.Layer("ScatterplotLayer", filtered_stations, get_position=["lon", "lat"], get_color="color", get_radius=SAFE_COL, radius_scale=0.02, radius_min_pixels=3, pickable=True)
+    
+    # 智能视角缩放：如果只选了一个站，可以自动聚焦过去，如果不选就看全图
     view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
     st.pydeck_chart(pdk.Deck(
