@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
 # ==========================================
-# 🚇 双语全覆盖：工程代号 + 中文名 RGB 映射表
+# 🚇 防漏网之鱼：全形态 RGB 映射表
 # ==========================================
 def get_line_color(line_code):
     if pd.isna(line_code): 
@@ -21,25 +21,38 @@ def get_line_color(line_code):
     
     name = str(line_code).strip().upper()
     
+    # 1. 纯数字防漏 (应对代号仅仅是 "6", "16" 等极简情况)
+    pure_numbers = {
+        "1": [194, 55, 48], "2": [0, 70, 147], "3": [227, 27, 35],
+        "4": [0, 172, 163], "5": [166, 33, 127], "6": [237, 157, 0],
+        "7": [255, 199, 44], "8": [0, 158, 78], "9": [153, 204, 0],
+        "10": [0, 158, 224], "11": [237, 121, 107], "12": [199, 107, 0],
+        "13": [255, 222, 0], "14": [209, 139, 131], "15": [106, 53, 125],
+        "16": [96, 176, 66], "17": [0, 171, 171], "19": [211, 163, 201]
+    }
+    if name in pure_numbers:
+        return pure_numbers[name] + [255]
+
+    # 2. 奇葩前缀防漏 (加入了 M06, L6, 中文数字等所有变体)
     exact_mapping = {
         "M1": [194, 55, 48], "1号线": [194, 55, 48], "八通线": [194, 55, 48],
         "M2": [0, 70, 147], "2号线": [0, 70, 147],
-        "M3": [227, 27, 35], "3号线": [227, 27, 35],
+        "M3": [227, 27, 35], "3号线": [227, 27, 35], "M03": [227, 27, 35], "L3": [227, 27, 35], "三号线": [227, 27, 35],
         "M4": [0, 172, 163], "4号线": [0, 172, 163], "大兴线": [0, 172, 163],
         "M5": [166, 33, 127], "5号线": [166, 33, 127],
-        "M6": [237, 157, 0], "6号线": [237, 157, 0],
+        "M6": [237, 157, 0], "6号线": [237, 157, 0], "M06": [237, 157, 0], "L6": [237, 157, 0], "六号线": [237, 157, 0],
         "M7": [255, 199, 44], "7号线": [255, 199, 44],
         "M8": [0, 158, 78], "8号线": [0, 158, 78],
         "M9": [153, 204, 0], "9号线": [153, 204, 0],
         "M10": [0, 158, 224], "10号线": [0, 158, 224],
         "M11": [237, 121, 107], "11号线": [237, 121, 107],
-        "M12": [199, 107, 0], "12号线": [199, 107, 0],
+        "M12": [199, 107, 0], "12号线": [199, 107, 0], "L12": [199, 107, 0], "十二号线": [199, 107, 0],
         "M13": [255, 222, 0], "13号线": [255, 222, 0],
         "M14": [209, 139, 131], "14号线": [209, 139, 131],
         "M15": [106, 53, 125], "15号线": [106, 53, 125],
-        "M16": [96, 176, 66], "16号线": [96, 176, 66],
+        "M16": [96, 176, 66], "16号线": [96, 176, 66], "L16": [96, 176, 66], "十六号线": [96, 176, 66],
         "M17": [0, 171, 171], "17号线": [0, 171, 171],
-        "M19": [211, 163, 201], "19号线": [211, 163, 201],
+        "M19": [211, 163, 201], "19号线": [211, 163, 201], "L19": [211, 163, 201], "十九号线": [211, 163, 201],
         "FS": [237, 125, 49], "房山线": [237, 125, 49], "燕房线": [237, 125, 49],
         "CP": [231, 131, 183], "昌平线": [231, 131, 183],
         "YZ": [237, 0, 140], "亦庄线": [237, 0, 140],
@@ -59,7 +72,18 @@ def get_line_color(line_code):
             
     return [150, 150, 150, 150]
 
-# --- 2. 数据加载引擎 ---
+# --- 2. 注入全局 CSS ---
+st.markdown(
+    """
+    <style>
+    [data-testid="stDeckGlJsonChart"] { height: 70vh !important; }
+    [data-testid="StyledFullScreenButton"] { display: none; }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+# --- 3. 数据加载引擎 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
@@ -93,7 +117,15 @@ def load_data():
 
 df_stations, gdf_lines = load_data()
 
-# --- 3. 地图渲染引擎 ---
+# ==========================================
+# 🕵️ “透视眼”：排查剩余灰线专用
+# ==========================================
+if gdf_lines is not None:
+    with st.expander("🛠️ 如果还有灰色的线路，请点开这里查看它们的『真实代号』！"):
+        st.write("👉 你的地图文件里，所有的线路内部代号都在下面这里了。请复制出灰线的名字发给我：")
+        st.code(list(gdf_lines['display_name'].unique()))
+
+# --- 4. 地图渲染引擎 ---
 if df_stations is not None and gdf_lines is not None:
     
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
@@ -127,7 +159,6 @@ if df_stations is not None and gdf_lines is not None:
             pickable=True,
         )
 
-        # 【重点修改 1】：视角改为 pitch=0 (完全垂直的俯视 2D 视角)，并微调缩放比例
         view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
         st.pydeck_chart(pdk.Deck(
@@ -135,13 +166,11 @@ if df_stations is not None and gdf_lines is not None:
             initial_view_state=view_state,
             map_style="light", 
             tooltip={
-                "html": "<b>站点:</b> {stations} <br/> <b>进站量:</b> {volume} 人次"
+                "html": "<b>站点/信息:</b> {stations} <br/> <b>数据:</b> {volume}"
             }
         ))
         
-        # ==========================================
-        # 🖼️ 网页前端 UI 组件（CSS/HTML 魔法）
-        # ==========================================
+        # UI 组件代码
         def get_base64_of_bin_file(bin_file):
             try:
                 with open(bin_file, 'rb') as f:
@@ -151,81 +180,33 @@ if df_stations is not None and gdf_lines is not None:
 
         legend_base64 = get_base64_of_bin_file(DATA_DIR / "legend.png") or get_base64_of_bin_file(DATA_DIR / "legend.jpg")
         
-        # 构建 UI 界面的 HTML 字符串
         ui_html = """
         <style>
-        /* 强制拉高地图框架 */
-        [data-testid="stDeckGlJsonChart"] {
-            height: 70vh !important;
-        }
-        /* 隐藏地图全屏按钮，避免干扰 */
-        [data-testid="StyledFullScreenButton"] {
-            display: none;
-        }
-
-        /* ---------------- 左侧高级悬浮工具栏 ---------------- */
         .custom-toolbar {
-            position: fixed;
-            top: 200px; /* 位于地图左侧偏上的位置 */
-            left: 40px; 
-            z-index: 99999;
-            display: flex;
-            flex-direction: column;
-            gap: 12px;
+            position: fixed; top: 200px; left: 40px; z-index: 99999;
+            display: flex; flex-direction: column; gap: 12px;
         }
-
         .tool-btn {
-            background-color: rgba(255, 255, 255, 0.9);
-            border: 1px solid #ccc;
-            border-radius: 6px;
-            width: 45px;
-            height: 45px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 24px;
-            cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-            transition: all 0.2s;
-            text-decoration: none;
-            color: #333;
-            position: relative;
+            background-color: rgba(255, 255, 255, 0.9); border: 1px solid #ccc;
+            border-radius: 6px; width: 45px; height: 45px; display: flex;
+            justify-content: center; align-items: center; font-size: 24px;
+            cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            transition: all 0.2s; text-decoration: none; color: #333; position: relative;
         }
-        .tool-btn:hover {
-            background-color: #f5f5f5;
-            transform: scale(1.05);
-        }
-
-        /* 鼠标悬浮说明窗 */
+        .tool-btn:hover { background-color: #f5f5f5; transform: scale(1.05); }
         .mouse-tooltip {
-            visibility: hidden;
-            position: absolute;
-            left: 60px; /* 在鼠标按钮的右侧弹出 */
-            top: 0;
-            background-color: rgba(255, 255, 255, 0.95);
-            color: #333;
-            padding: 15px 20px;
-            border-radius: 8px;
-            width: 280px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-            opacity: 0;
-            transition: opacity 0.3s;
-            font-size: 14px;
-            line-height: 1.8;
-            border: 1px solid #ddd;
-            pointer-events: none; /* 防止遮挡鼠标 */
+            visibility: hidden; position: absolute; left: 60px; top: 0;
+            background-color: rgba(255, 255, 255, 0.95); color: #333;
+            padding: 15px 20px; border-radius: 8px; width: 280px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2); opacity: 0;
+            transition: opacity 0.3s; font-size: 14px; line-height: 1.8;
+            border: 1px solid #ddd; pointer-events: none;
         }
-        .tool-btn.mouse-btn:hover .mouse-tooltip {
-            visibility: visible;
-            opacity: 1;
-        }
+        .tool-btn.mouse-btn:hover .mouse-tooltip { visibility: visible; opacity: 1; }
         </style>
-
         <div class="custom-toolbar">
             <a class="tool-btn" href="javascript:window.location.reload()" title="一键复原初始视角">🧭</a>
-            
-            <div class="tool-btn mouse-btn">
-                🖱️
+            <div class="tool-btn mouse-btn">🖱️
                 <div class="mouse-tooltip">
                     <b style="font-size: 16px;">🖱️ 地图交互说明</b><hr style="margin: 8px 0;">
                     <span style="color:#d32f2f;">●</span> <b>左键按住拖动</b>：平移地图<br>
@@ -237,33 +218,20 @@ if df_stations is not None and gdf_lines is not None:
         </div>
         """
 
-        # 【重点修改 2】：如果找到了图例图片，就把它定格在右下角
         if legend_base64:
             ui_html += f"""
             <style>
             .legend-container {{
-                position: fixed;
-                bottom: 40px;
-                right: 40px; /* 挪到了屏幕右下角 */
-                z-index: 99999;
-                background-color: rgba(255, 255, 255, 0.85);
-                padding: 10px;
-                border-radius: 10px;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-                backdrop-filter: blur(8px);
-                pointer-events: none;
+                position: fixed; bottom: 40px; right: 40px; z-index: 99999;
+                background-color: rgba(255, 255, 255, 0.85); padding: 10px;
+                border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                backdrop-filter: blur(8px); pointer-events: none;
             }}
-            .legend-container img {{
-                max-height: 280px;
-                object-fit: contain;
-            }}
+            .legend-container img {{ max-height: 280px; object-fit: contain; }}
             </style>
-            <div class="legend-container">
-                <img src="data:image/png;base64,{legend_base64}">
-            </div>
+            <div class="legend-container"><img src="data:image/png;base64,{legend_base64}"></div>
             """
 
-        # 最终将所有 UI 渲染到网页上
         st.markdown(ui_html, unsafe_allow_html=True)
 
     except KeyError:
