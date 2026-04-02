@@ -13,7 +13,7 @@ BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
 # ==========================================
-# 🚇 安全稳定版：只用字母和汉字匹配，绝不用纯数字，防止误伤！
+# 🚇 安全稳定版：只用字母和汉字匹配
 # ==========================================
 def get_line_color(line_code):
     if pd.isna(line_code): 
@@ -21,7 +21,6 @@ def get_line_color(line_code):
     
     name = str(line_code).strip().upper()
     
-    # 包含了几乎所有非纯数字的变体
     safe_mapping = {
         "M1": [194, 55, 48], "1号": [194, 55, 48], "八通": [194, 55, 48], "一号": [194, 55, 48], "L1": [194, 55, 48],
         "M2": [0, 70, 147], "2号": [0, 70, 147], "二号": [0, 70, 147], "L2": [0, 70, 147],
@@ -79,7 +78,6 @@ def load_data():
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
-        # 恢复之前那套最稳健的匹配逻辑
         best_col = None
         for col in gdf_lines.columns:
             if col == 'geometry': continue
@@ -112,6 +110,9 @@ if df_stations is not None and gdf_lines is not None:
         df_stations['color'] = df_stations[SAFE_COL].apply(
             lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
         )
+        
+        # 💥 降维打击：在送入地图前，提前用 Python 把带中文的提示文本拼装好！彻底避开乱码！
+        df_stations['tooltip_text'] = "<b>站点：</b>" + df_stations['stations'].astype(str) + "<br/><b>进站量：</b>" + df_stations[SAFE_COL].astype(str) + " 人次"
 
         layer_lines = pdk.Layer(
             "GeoJsonLayer",
@@ -139,13 +140,12 @@ if df_stations is not None and gdf_lines is not None:
             layers=[layer_lines, layer_stations],
             initial_view_state=view_state,
             map_style="light", 
-            # 💥 彻底移除了带有乱码隐患的 display_name 字段！只显示站名和客流！
+            # 引擎只需要无脑提取刚刚拼好的这一列就行了
             tooltip={
-                "html": "<b>站点:</b> {stations} <br/> <b>进站量:</b> {volume} 人次"
+                "html": "{tooltip_text}"
             }
         ))
         
-        # UI 组件代码保持不变（指南针+图例）
         def get_base64_of_bin_file(bin_file):
             try:
                 with open(bin_file, 'rb') as f:
@@ -165,8 +165,8 @@ if df_stations is not None and gdf_lines is not None:
             background-color: rgba(255, 255, 255, 0.9); border: 1px solid #ccc;
             border-radius: 6px; width: 45px; height: 45px; display: flex;
             justify-content: center; align-items: center; font-size: 24px;
-            cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
-            transition: all 0.2s; text-decoration: none; color: #333; position: relative;
+            cursor: default; box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+            transition: all 0.2s; color: #333; position: relative;
         }
         .tool-btn:hover { background-color: #f5f5f5; transform: scale(1.05); }
         .mouse-tooltip {
@@ -177,11 +177,11 @@ if df_stations is not None and gdf_lines is not None:
             transition: opacity 0.3s; font-size: 14px; line-height: 1.8;
             border: 1px solid #ddd; pointer-events: none;
         }
-        .tool-btn.mouse-btn:hover .mouse-tooltip { visibility: visible; opacity: 1; }
+        .tool-btn:hover .mouse-tooltip { visibility: visible; opacity: 1; }
         </style>
+        
         <div class="custom-toolbar">
-            <a class="tool-btn" href="javascript:window.location.reload()" title="一键复原初始视角">🧭</a>
-            <div class="tool-btn mouse-btn">🖱️
+            <div class="tool-btn">🖱️
                 <div class="mouse-tooltip">
                     <b style="font-size: 16px;">🖱️ 地图交互说明</b><hr style="margin: 8px 0;">
                     <span style="color:#d32f2f;">●</span> <b>左键按住拖动</b>：平移地图<br>
