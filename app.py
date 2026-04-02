@@ -5,6 +5,13 @@ import pydeck as pdk
 from pathlib import Path
 import base64
 
+# --- 尝试导入高级图表库 Plotly ---
+try:
+    import plotly.express as px
+    HAS_PLOTLY = True
+except ImportError:
+    HAS_PLOTLY = False
+
 # --- 1. 页面基本设置 ---
 st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
 
@@ -109,12 +116,12 @@ if df_stations is not None and gdf_lines_cached is not None:
         selected_lines = st.multiselect("🚇 按路线筛选", options=sorted(list(all_station_lines)), default=[])
 
         # ------------------------------------------
-        # 🧠 新增：智能数据分析引擎
+        # 🧠 智能数据分析引擎 (含百变图表)
         # ------------------------------------------
         st.markdown("---")
         st.header("🧠 智能数据分析")
         
-        # 获取当前要分析的数据（全网或被筛选的线路）
+        # 获取当前要分析的数据
         if selected_lines:
             mask = pd.Series(False, index=df_stations.index)
             for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
@@ -125,7 +132,7 @@ if df_stations is not None and gdf_lines_cached is not None:
             ana_df = df_stations
             
         if not ana_df.empty:
-            # 1. 核心指标面板 (大字报)
+            # 1. 核心指标面板
             total_vol = ana_df[SAFE_COL].sum()
             max_row = ana_df.loc[ana_df[SAFE_COL].idxmax()]
             
@@ -136,16 +143,48 @@ if df_stations is not None and gdf_lines_cached is not None:
             # 2. AI 文字洞察总结
             st.info(f"💡 **数据洞察**：\n当前展示范围内共有 **{len(ana_df)}** 个站点。客流压力极值点出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
             
-            # 3. 交互图表：TOP 10 柱状图
-            st.markdown("**📊 客流 TOP 10 站点**")
-            top10_df = ana_df.nlargest(10, SAFE_COL)[['stations', SAFE_COL]].set_index('stations')
-            # 使用 Streamlit 自带的美观柱状图
-            st.bar_chart(top10_df, color="#ff4b4b")
-            
-            # 4. 交互图表：区县分布
-            st.markdown("**🏙️ 区县客流分布热度**")
-            district_df = ana_df.groupby('区县')[SAFE_COL].sum().sort_values(ascending=False)
-            st.bar_chart(district_df, color="#009EE0")
+            # 3. 🎨 图表样式切换按钮
+            if HAS_PLOTLY:
+                chart_style = st.selectbox(
+                    "🎨 图表样式切换", 
+                    ["📊 柱状图", "🍩 圈状图", "🥧 饼状图", "🕸️ 雷达图"]
+                )
+                
+                # 准备作图数据
+                top10_df = ana_df.nlargest(10, SAFE_COL).sort_values(by=SAFE_COL, ascending=True).copy()
+                district_df = ana_df.groupby('区县')[SAFE_COL].sum().reset_index()
+
+                # 万能作图函数
+                def render_chart(df, name_col, value_col, title, color_theme):
+                    if chart_style == "📊 柱状图":
+                        fig = px.bar(df, x=value_col, y=name_col, orientation='h', title=title, color_discrete_sequence=[color_theme])
+                    elif chart_style == "🍩 圈状图":
+                        fig = px.pie(df, names=name_col, values=value_col, hole=0.5, title=title)
+                    elif chart_style == "🥧 饼状图":
+                        fig = px.pie(df, names=name_col, values=value_col, title=title)
+                    elif chart_style == "🕸️ 雷达图":
+                        fig = px.line_polar(df, r=value_col, theta=name_col, line_close=True, title=title)
+                        fig.update_traces(fill='toself', line_color=color_theme)
+                    
+                    # 优化图表外观，让它和侧边栏更融洽
+                    fig.update_layout(
+                        margin=dict(l=10, r=10, t=40, b=10), 
+                        paper_bgcolor="rgba(0,0,0,0)", 
+                        plot_bgcolor="rgba(0,0,0,0)",
+                        title_font_size=14
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+
+                st.markdown("---")
+                render_chart(top10_df, 'stations', SAFE_COL, "📈 客流 TOP 10 站点", "#ff4b4b")
+                render_chart(district_df, '区县', SAFE_COL, "🏙️ 区县客流分布热度", "#009EE0")
+
+            else:
+                st.error("🚨 缺少画图插件！请在终端运行: `pip install plotly`，然后刷新网页即可解锁百变图表！")
+                # 备用极简图表
+                st.markdown("**📊 客流 TOP 10 站点**")
+                st.bar_chart(ana_df.nlargest(10, SAFE_COL)[['stations', SAFE_COL]].set_index('stations'), color="#ff4b4b")
+
         else:
             st.warning("所选线路暂无数据。")
 
@@ -183,7 +222,7 @@ if df_stations is not None and gdf_lines_cached is not None:
     else:
         render_lines['color'] = render_lines[line_name_col].apply(get_line_color) if line_name_col else pd.Series([[100, 100, 100, 200]] * len(render_lines))
 
-    filtered_stations = ana_df.copy() # 复用刚才分析的数据
+    filtered_stations = ana_df.copy() 
     filtered_stations['color'] = filtered_stations[SAFE_COL].apply(
         lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
     )
@@ -199,7 +238,6 @@ if df_stations is not None and gdf_lines_cached is not None:
         tooltip={"html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"}
     ))
     
-    # 🖼️ 左下角图例
     def get_base64_of_bin_file(bin_file):
         try:
             with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
