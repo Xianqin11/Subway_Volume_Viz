@@ -4,27 +4,14 @@ import geopandas as gpd
 import pydeck as pdk
 from pathlib import Path
 import base64
-import sys
-import subprocess
 
-# --- 🎯 黑科技：强制在当前精确的 Python 环境中自动安装 plotly ---
+# --- 优雅导入高级图表库 ---
 try:
     import plotly.express as px
     HAS_PLOTLY = True
 except ImportError:
-    # 如果没找到，就在网页上显示提示，并让代码自己在后台调用 pip
-    st.warning("🔄 检测到缺少 plotly 插件，正在为您当前的环境自动下载安装，请稍候约 10 秒钟...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly"])
-        st.success("🎉 自动安装成功！请马上按下键盘上的 F5（或点击浏览器刷新按钮）刷新本网页！")
-    except Exception as e:
-        st.error(f"自动安装失败，请截图报错：{e}")
     HAS_PLOTLY = False
 
-# --- 1. 页面基本设置 ---
-st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
-
-# ...(下面保留你原来所有的代码，都不用动)
 # --- 1. 页面基本设置 ---
 st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
 
@@ -68,9 +55,18 @@ def get_line_color(line_code):
         if key in name: return exact_mapping[key] + [255]
     return [150, 150, 150, 150]
 
-st.markdown("""<style>[data-testid="stDeckGlJsonChart"] { height: 70vh !important; } [data-testid="StyledFullScreenButton"] { display: none; }</style>""", unsafe_allow_html=True)
+# --- 2. 注入全局 CSS 强制放大地图 (60vh 黄金比例) ---
+st.markdown(
+    """
+    <style>
+    [data-testid="stDeckGlJsonChart"] { height: 60vh !important; } 
+    [data-testid="StyledFullScreenButton"] { display: none; }
+    </style>
+    """, 
+    unsafe_allow_html=True
+)
 
-# --- 数据加载 ---
+# --- 3. 数据加载引擎 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
@@ -96,7 +92,7 @@ def load_data():
 
 df_stations, gdf_lines_cached, line_name_col = load_data()
 
-# --- 核心逻辑 ---
+# --- 4. 核心渲染与分析逻辑 ---
 if df_stations is not None and gdf_lines_cached is not None:
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
     SAFE_COL = 'volume'
@@ -129,12 +125,11 @@ if df_stations is not None and gdf_lines_cached is not None:
         selected_lines = st.multiselect("🚇 按路线筛选", options=sorted(list(all_station_lines)), default=[])
 
         # ------------------------------------------
-        # 🧠 智能数据分析引擎 (含百变图表)
+        # 🧠 智能数据分析引擎
         # ------------------------------------------
         st.markdown("---")
         st.header("🧠 智能数据分析")
         
-        # 获取当前要分析的数据
         if selected_lines:
             mask = pd.Series(False, index=df_stations.index)
             for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
@@ -145,29 +140,22 @@ if df_stations is not None and gdf_lines_cached is not None:
             ana_df = df_stations
             
         if not ana_df.empty:
-            # 1. 核心指标面板
             total_vol = ana_df[SAFE_COL].sum()
             max_row = ana_df.loc[ana_df[SAFE_COL].idxmax()]
             
             col1, col2 = st.columns(2)
             col1.metric("总进站量", f"{total_vol:,.0f}")
-            col2.metric("最拥挤站点", f"{max_row['stations']}")
+            col2.metric("最挤站点", f"{max_row['stations']}")
             
-            # 2. AI 文字洞察总结
-            st.info(f"💡 **数据洞察**：\n当前展示范围内共有 **{len(ana_df)}** 个站点。客流压力极值点出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
+            st.info(f"💡 **数据洞察**：\n当前共分析 **{len(ana_df)}** 个站点。客流最高峰出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
             
-            # 3. 🎨 图表样式切换按钮
+            # 🎨 百变高级图表
             if HAS_PLOTLY:
-                chart_style = st.selectbox(
-                    "🎨 图表样式切换", 
-                    ["📊 柱状图", "🍩 圈状图", "🥧 饼状图", "🕸️ 雷达图"]
-                )
+                chart_style = st.selectbox("🎨 图表样式切换", ["📊 柱状图", "🍩 圈状图", "🥧 饼状图", "🕸️ 雷达图"])
                 
-                # 准备作图数据
                 top10_df = ana_df.nlargest(10, SAFE_COL).sort_values(by=SAFE_COL, ascending=True).copy()
                 district_df = ana_df.groupby('区县')[SAFE_COL].sum().reset_index()
 
-                # 万能作图函数
                 def render_chart(df, name_col, value_col, title, color_theme):
                     if chart_style == "📊 柱状图":
                         fig = px.bar(df, x=value_col, y=name_col, orientation='h', title=title, color_discrete_sequence=[color_theme])
@@ -179,7 +167,6 @@ if df_stations is not None and gdf_lines_cached is not None:
                         fig = px.line_polar(df, r=value_col, theta=name_col, line_close=True, title=title)
                         fig.update_traces(fill='toself', line_color=color_theme)
                     
-                    # 优化图表外观，让它和侧边栏更融洽
                     fig.update_layout(
                         margin=dict(l=10, r=10, t=40, b=10), 
                         paper_bgcolor="rgba(0,0,0,0)", 
@@ -190,19 +177,18 @@ if df_stations is not None and gdf_lines_cached is not None:
 
                 st.markdown("---")
                 render_chart(top10_df, 'stations', SAFE_COL, "📈 客流 TOP 10 站点", "#ff4b4b")
-                render_chart(district_df, '区县', SAFE_COL, "🏙️ 区县客流分布热度", "#009EE0")
+                render_chart(district_df, '区县', SAFE_COL, "🏙️ 区县分布热度", "#009EE0")
 
             else:
-                st.error("🚨 缺少画图插件！请在终端运行: `pip install plotly`，然后刷新网页即可解锁百变图表！")
-                # 备用极简图表
-                st.markdown("**📊 客流 TOP 10 站点**")
+                st.warning("🚀 正在等待服务器部署 plotly 高级图表库...")
+                st.info("💡 提示：如果您刚刚在 requirements.txt 中添加了 plotly，请耐心等待1-2分钟后刷新网页。")
                 st.bar_chart(ana_df.nlargest(10, SAFE_COL)[['stations', SAFE_COL]].set_index('stations'), color="#ff4b4b")
 
         else:
             st.warning("所选线路暂无数据。")
 
     # ==========================================
-    # 🔍 空间渲染逻辑
+    # 🔍 空间关联渲染
     # ==========================================
     render_lines = gdf_lines_cached.copy()
 
@@ -251,6 +237,7 @@ if df_stations is not None and gdf_lines_cached is not None:
         tooltip={"html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"}
     ))
     
+    # 🖼️ 左下角图例固定
     def get_base64_of_bin_file(bin_file):
         try:
             with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
