@@ -8,7 +8,6 @@ from pathlib import Path
 st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
 st.title("🚇 轨道站点客流与线路可视化")
 
-# 获取绝对路径
 BASE_DIR = Path(__file__).parent
 DATA_DIR = BASE_DIR / "data"
 
@@ -19,27 +18,20 @@ def load_data():
         # 1. 加载客流数据
         df_flow = pd.read_excel(DATA_DIR / "flow_static.xlsx")
         
-        # 2. 加载地理数据
-        gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp").to_crs(epsg=4326)
-        gdf_lines = gpd.read_file(DATA_DIR / "2025年底-线路909km-现状.shp").to_crs(epsg=4326)
-        
-        # 记录下真实的列名，留作备用
-        real_columns = gdf_stations.columns.tolist()
+        # 2. 加载地理数据 
+        # 【关键修复】：加上 encoding='utf-8'，彻底消灭火星文乱码！
+        gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp", encoding='utf-8').to_crs(epsg=4326)
+        gdf_lines = gpd.read_file(DATA_DIR / "2025年底-线路909km-现状.shp", encoding='utf-8').to_crs(epsg=4326)
         
         # 3. 数据融合
-        merged_stations = gdf_stations.merge(df_flow, left_on='NAME', right_on='stations', how='inner')
+        # 【关键修复】：暗号终于对上了！使用 '站点' 进行匹配
+        merged_stations = gdf_stations.merge(df_flow, left_on='站点', right_on='stations', how='inner')
         
         # 提取经纬度
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
         return merged_stations, gdf_lines
-        
-    except KeyError as e:
-        # 如果暗号不对，就把真实的列名打印到网页上
-        st.error("🚨 暗号没对上！地图里的站名那一列不叫 'NAME'。")
-        st.info(f"👉 侦察兵回报，你的地图文件里实际拥有的列名有：{real_columns}")
-        return None, None
     except Exception as e:
         st.error(f"数据加载出错啦: {e}")
         return None, None
@@ -82,5 +74,6 @@ if df_stations is not None and gdf_lines is not None:
         layers=[layer_lines, layer_stations],
         initial_view_state=view_state,
         map_style="light", 
+        # 这里的悬浮提示框也会正确显示中文了！
         tooltip={"html": "<b>{stations}</b><br/>进站量: {2025年2月25日进站量} 人次"}
     ))
