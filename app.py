@@ -4,14 +4,27 @@ import geopandas as gpd
 import pydeck as pdk
 from pathlib import Path
 import base64
+import sys
+import subprocess
 
-# --- 尝试导入高级图表库 Plotly ---
+# --- 🎯 黑科技：强制在当前精确的 Python 环境中自动安装 plotly ---
 try:
     import plotly.express as px
     HAS_PLOTLY = True
 except ImportError:
+    # 如果没找到，就在网页上显示提示，并让代码自己在后台调用 pip
+    st.warning("🔄 检测到缺少 plotly 插件，正在为您当前的环境自动下载安装，请稍候约 10 秒钟...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "plotly"])
+        st.success("🎉 自动安装成功！请马上按下键盘上的 F5（或点击浏览器刷新按钮）刷新本网页！")
+    except Exception as e:
+        st.error(f"自动安装失败，请截图报错：{e}")
     HAS_PLOTLY = False
 
+# --- 1. 页面基本设置 ---
+st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
+
+# ...(下面保留你原来所有的代码，都不用动)
 # --- 1. 页面基本设置 ---
 st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
 
