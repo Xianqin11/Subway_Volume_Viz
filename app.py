@@ -7,10 +7,6 @@ import base64
 
 # --- 1. 页面基本设置 ---
 st.set_page_config(layout="wide", page_title="轨道站点客流可视化", page_icon="🚇")
-st.title("🚇 轨道站点客流与线路可视化")
-
-BASE_DIR = Path(__file__).parent
-DATA_DIR = BASE_DIR / "data"
 
 # ==========================================
 # 🚇 双语全覆盖：工程代号 + 中文名 RGB 映射表
@@ -70,6 +66,9 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+
 # --- 3. 数据加载引擎 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
@@ -82,7 +81,6 @@ def load_data():
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
-        # 智能盲找列
         best_col = None
         for col in gdf_lines.columns:
             if col == 'geometry': continue
@@ -95,108 +93,160 @@ def load_data():
         if not best_col:
             gdf_lines['color'] = pd.Series([[100, 100, 100, 200]] * len(gdf_lines))
             
-        return merged_stations, gdf_lines
+        return merged_stations, gdf_lines, best_col
     except Exception as e:
         st.error(f"数据加载出错啦: {e}")
-        return None, None
+        return None, None, None
 
-df_stations, gdf_lines = load_data()
+df_stations, gdf_lines, line_name_col = load_data()
 
-# --- 4. 地图渲染引擎 ---
+# --- 4. 核心渲染与交互逻辑 ---
 if df_stations is not None and gdf_lines is not None:
     
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
     SAFE_COL = 'volume'
     
-    try:
-        df_stations = df_stations.rename(columns={ORIGINAL_COL: SAFE_COL})
-        df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
-        
-        # 💥 智能提取多条线路并优雅拼接
-        def combine_lines(row):
-            lines = []
-            for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
-                if col in row and pd.notna(row[col]):
-                    val = str(row[col]).strip()
-                    if val and val.lower() != 'nan':
-                        lines.append(val)
-            return "、".join(lines) if lines else "未知线路"
+    df_stations = df_stations.rename(columns={ORIGINAL_COL: SAFE_COL})
+    df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
+    
+    def combine_lines(row):
+        lines = []
+        for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+            if col in row and pd.notna(row[col]):
+                val = str(row[col]).strip()
+                if val and val.lower() != 'nan':
+                    lines.append(val)
+        return "、".join(lines) if lines else "未知线路"
 
-        df_stations['所属线路'] = df_stations.apply(combine_lines, axis=1)
-        df_stations['区县'] = df_stations['区县'].fillna('未知区县')
+    df_stations['所属线路'] = df_stations.apply(combine_lines, axis=1)
+    df_stations['区县'] = df_stations['区县'].fillna('未知区县')
+    
+    # ==========================================
+    # 🎛️ 左侧边栏：交互控制台
+    # ==========================================
+    with st.sidebar:
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Beijing_Subway_logo.svg/200px-Beijing_Subway_logo.svg.png", width=60)
+        st.header("🎛️ 数据筛选控制台")
+        st.markdown("---")
         
-        df_stations['color'] = df_stations[SAFE_COL].apply(
-            lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
+        # 自动从表格里收集所有的线路名称
+        all_station_lines = set()
+        for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+            if col in df_stations.columns:
+                for val in df_stations[col].dropna().astype(str):
+                    if val and val.lower() != 'nan' and '未知' not in val:
+                        all_station_lines.add(val.strip())
+        
+        # 渲染多选框
+        selected_lines = st.multiselect(
+            "🚇 按路线筛选客流 (可多选)", 
+            options=sorted(list(all_station_lines)),
+            default=[],
+            help="选择你要查看的线路。不选则默认显示全网数据。"
         )
 
-        layer_lines = pdk.Layer(
-            "GeoJsonLayer",
-            gdf_lines,
-            get_line_color="color", 
-            get_line_width=25,      
-            line_width_min_pixels=3,
-            pickable=True,
-        )
-
-        layer_stations = pdk.Layer(
-            "ScatterplotLayer",
-            df_stations,
-            get_position=["lon", "lat"],
-            get_color="color",
-            get_radius=SAFE_COL,   
-            radius_scale=0.02,      
-            radius_min_pixels=3,
-            pickable=True,
-        )
-
-        view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
-
-        st.pydeck_chart(pdk.Deck(
-            layers=[layer_lines, layer_stations],
-            initial_view_state=view_state,
-            map_style="light", 
-            # 🎯 悬浮窗直接调用完美拼接好的“所属线路”
-            tooltip={
-                "html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"
-            }
-        ))
+    # ==========================================
+    # 🔍 数据过滤与聚光灯特效
+    # ==========================================
+    if selected_lines:
+        # 1. 过滤站点：只要这个站所属的线路里包含选中的线路，就把它保留下来
+        mask = pd.Series(False, index=df_stations.index)
+        for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+            if col in df_stations.columns:
+                mask = mask | df_stations[col].isin(selected_lines)
+        filtered_stations = df_stations[mask].copy()
         
-        def get_base64_of_bin_file(bin_file):
-            try:
-                with open(bin_file, 'rb') as f:
-                    return base64.b64encode(f.read()).decode()
-            except:
-                return None
-
-        legend_base64 = get_base64_of_bin_file(DATA_DIR / "legend.png") or get_base64_of_bin_file(DATA_DIR / "legend.jpg")
-        
-        if legend_base64:
-            st.markdown(
-                f"""
-                <style>
-                .legend-container {{
-                    position: fixed;
-                    bottom: 40px;
-                    left: 40px; 
-                    z-index: 99999;
-                    background-color: rgba(255, 255, 255, 0.85);
-                    padding: 8px;
-                    border-radius: 8px;
-                    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                    backdrop-filter: blur(5px);
-                    pointer-events: none;
-                }}
-                .legend-container img {{
-                    max-height: 280px; 
-                    object-fit: contain;
-                }}
-                </style>
-                <div class="legend-container">
-                    <img src="data:image/png;base64,{legend_base64}">
-                </div>
-                """,
-                unsafe_allow_html=True
+        # 2. 聚光灯特效：把没有被选中的轨道路线变成淡淡的灰色背景
+        def is_line_selected(code):
+            name = str(code).strip().upper()
+            for sl in selected_lines:
+                sl_clean = sl.replace("线", "")
+                if sl_clean in name or sl in name: return True
+                if name.startswith("M") and name[1:] == sl_clean: return True
+            return False
+            
+        if line_name_col:
+            gdf_lines['color'] = gdf_lines.apply(
+                lambda row: row['color'] if is_line_selected(row[line_name_col]) else [200, 200, 200, 50], 
+                axis=1
             )
+    else:
+        # 如果什么都没选，就显示全部
+        filtered_stations = df_stations.copy()
 
-    except KeyError:
-        st.error(f"🚨 找不到名为 '{ORIGINAL_COL}' 的列！")
+    # 动态计算气泡颜色
+    filtered_stations['color'] = filtered_stations[SAFE_COL].apply(
+        lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
+    )
+
+    st.title("🚇 轨道站点客流与线路可视化")
+    
+    # 图层渲染
+    layer_lines = pdk.Layer(
+        "GeoJsonLayer",
+        gdf_lines,
+        get_line_color="color", 
+        get_line_width=25,      
+        line_width_min_pixels=3,
+        pickable=True,
+    )
+
+    layer_stations = pdk.Layer(
+        "ScatterplotLayer",
+        filtered_stations, # 这里使用了过滤后的气泡数据
+        get_position=["lon", "lat"],
+        get_color="color",
+        get_radius=SAFE_COL,   
+        radius_scale=0.02,      
+        radius_min_pixels=3,
+        pickable=True,
+    )
+
+    view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
+
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer_lines, layer_stations],
+        initial_view_state=view_state,
+        map_style="light", 
+        tooltip={
+            "html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"
+        }
+    ))
+    
+    # 🖼️ 左下角图例
+    def get_base64_of_bin_file(bin_file):
+        try:
+            with open(bin_file, 'rb') as f:
+                return base64.b64encode(f.read()).decode()
+        except:
+            return None
+
+    legend_base64 = get_base64_of_bin_file(DATA_DIR / "legend.png") or get_base64_of_bin_file(DATA_DIR / "legend.jpg")
+    
+    if legend_base64:
+        st.markdown(
+            f"""
+            <style>
+            .legend-container {{
+                position: fixed;
+                bottom: 40px;
+                left: 40px; 
+                z-index: 99999;
+                background-color: rgba(255, 255, 255, 0.85);
+                padding: 8px;
+                border-radius: 8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                backdrop-filter: blur(5px);
+                pointer-events: none;
+            }}
+            .legend-container img {{
+                max-height: 280px; 
+                object-fit: contain;
+            }}
+            </style>
+            <div class="legend-container">
+                <img src="data:image/png;base64,{legend_base64}">
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
