@@ -15,11 +15,8 @@ DATA_DIR = BASE_DIR / "data"
 # 🚇 史诗级全覆盖：RGB 映射表
 # ==========================================
 def get_line_color(line_code):
-    if pd.isna(line_code): 
-        return [150, 150, 150, 150]
-    
+    if pd.isna(line_code): return [150, 150, 150, 150]
     name = str(line_code).strip().upper()
-    
     exact_mapping = {
         "M1": [194, 55, 48], "1号": [194, 55, 48], "八通": [194, 55, 48], "一号": [194, 55, 48], "L1": [194, 55, 48],
         "M2": [0, 70, 147], "2号": [0, 70, 147], "二号": [0, 70, 147], "L2": [0, 70, 147],
@@ -47,25 +44,13 @@ def get_line_color(line_code):
         "JC": [153, 136, 166], "首都机场": [153, 136, 166], "机场线": [153, 136, 166],
         "DXJC": [0, 70, 147], "大兴机场": [0, 70, 147], "新机场": [0, 70, 147]
     }
-        
     for key in sorted(exact_mapping.keys(), key=len, reverse=True):
-        if key in name:
-            return exact_mapping[key] + [255]
-            
+        if key in name: return exact_mapping[key] + [255]
     return [150, 150, 150, 150]
 
-# --- 2. 注入全局 CSS ---
-st.markdown(
-    """
-    <style>
-    [data-testid="stDeckGlJsonChart"] { height: 70vh !important; }
-    [data-testid="StyledFullScreenButton"] { display: none; }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+st.markdown("""<style>[data-testid="stDeckGlJsonChart"] { height: 70vh !important; } [data-testid="StyledFullScreenButton"] { display: none; }</style>""", unsafe_allow_html=True)
 
-# --- 3. 数据加载引擎 ---
+# --- 数据加载 ---
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
@@ -77,7 +62,6 @@ def load_data():
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
-        # 智能盲找列：只找出名字所在的列，绝不在这里修改颜色，保护缓存！
         best_col = None
         for col in gdf_lines.columns:
             if col == 'geometry': continue
@@ -85,7 +69,6 @@ def load_data():
             if test_colors.apply(lambda c: c != [150, 150, 150, 150]).any():
                 best_col = col
                 break
-                
         return merged_stations, gdf_lines, best_col
     except Exception as e:
         st.error(f"数据加载出错啦: {e}")
@@ -93,9 +76,8 @@ def load_data():
 
 df_stations, gdf_lines_cached, line_name_col = load_data()
 
-# --- 4. 核心渲染引擎 ---
+# --- 核心逻辑 ---
 if df_stations is not None and gdf_lines_cached is not None:
-    
     ORIGINAL_COL = '2025年2月25日工作日全日进站（万人次）'
     SAFE_COL = 'volume'
     
@@ -103,26 +85,20 @@ if df_stations is not None and gdf_lines_cached is not None:
     df_stations[SAFE_COL] = pd.to_numeric(df_stations[SAFE_COL], errors='coerce').fillna(0)
     
     def combine_lines(row):
-        lines = []
-        for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
-            if col in row and pd.notna(row[col]):
-                val = str(row[col]).strip()
-                if val and val.lower() != 'nan':
-                    lines.append(val)
+        lines = [str(row[col]).strip() for col in ['轨道线路1', '轨道线路2', '轨道线路3'] if col in row and pd.notna(row[col])]
+        lines = [val for val in lines if val and val.lower() != 'nan']
         return "、".join(lines) if lines else "未知线路"
 
     df_stations['所属线路'] = df_stations.apply(combine_lines, axis=1)
     df_stations['区县'] = df_stations['区县'].fillna('未知区县')
     
     # ==========================================
-    # 🎛️ 左侧边栏：交互控制台
+    # 🎛️ 左侧边栏：交互控制台 + 智能数据分析
     # ==========================================
     with st.sidebar:
         st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/d/d4/Beijing_Subway_logo.svg/200px-Beijing_Subway_logo.svg.png", width=60)
-        st.header("🎛️ 数据筛选控制台")
-        st.markdown("---")
+        st.header("🎛️ 数据控制台")
         
-        # 收集所有的线路名称
         all_station_lines = set()
         for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
             if col in df_stations.columns:
@@ -130,36 +106,63 @@ if df_stations is not None and gdf_lines_cached is not None:
                     if val and val.lower() != 'nan' and '未知' not in val:
                         all_station_lines.add(val.strip())
         
-        selected_lines = st.multiselect(
-            "🚇 按路线筛选 (可多选)", 
-            options=sorted(list(all_station_lines)),
-            default=[],
-            help="选择你要查看的线路。不选则默认显示全网数据。"
-        )
+        selected_lines = st.multiselect("🚇 按路线筛选", options=sorted(list(all_station_lines)), default=[])
+
+        # ------------------------------------------
+        # 🧠 新增：智能数据分析引擎
+        # ------------------------------------------
+        st.markdown("---")
+        st.header("🧠 智能数据分析")
+        
+        # 获取当前要分析的数据（全网或被筛选的线路）
+        if selected_lines:
+            mask = pd.Series(False, index=df_stations.index)
+            for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
+                if col in df_stations.columns:
+                    mask = mask | df_stations[col].isin(selected_lines)
+            ana_df = df_stations[mask]
+        else:
+            ana_df = df_stations
+            
+        if not ana_df.empty:
+            # 1. 核心指标面板 (大字报)
+            total_vol = ana_df[SAFE_COL].sum()
+            max_row = ana_df.loc[ana_df[SAFE_COL].idxmax()]
+            
+            col1, col2 = st.columns(2)
+            col1.metric("总进站量", f"{total_vol:,.0f}")
+            col2.metric("最拥挤站点", f"{max_row['stations']}")
+            
+            # 2. AI 文字洞察总结
+            st.info(f"💡 **数据洞察**：\n当前展示范围内共有 **{len(ana_df)}** 个站点。客流压力极值点出现在【{max_row['区县']}】的 **{max_row['stations']}** 站，单日进站量达到 **{max_row[SAFE_COL]:,.0f}** 人次。")
+            
+            # 3. 交互图表：TOP 10 柱状图
+            st.markdown("**📊 客流 TOP 10 站点**")
+            top10_df = ana_df.nlargest(10, SAFE_COL)[['stations', SAFE_COL]].set_index('stations')
+            # 使用 Streamlit 自带的美观柱状图
+            st.bar_chart(top10_df, color="#ff4b4b")
+            
+            # 4. 交互图表：区县分布
+            st.markdown("**🏙️ 区县客流分布热度**")
+            district_df = ana_df.groupby('区县')[SAFE_COL].sum().sort_values(ascending=False)
+            st.bar_chart(district_df, color="#009EE0")
+        else:
+            st.warning("所选线路暂无数据。")
 
     # ==========================================
-    # 🔍 智能空间关联查询 (处理过滤与聚光灯)
+    # 🔍 空间渲染逻辑
     # ==========================================
-    # 必须对地图线条做副本，否则会污染缓存！
     render_lines = gdf_lines_cached.copy()
 
-    # 🕵️ 超级翻译器：判断地图上的线路是不是被选中了
     def is_line_selected(shp_code, sel_lines):
         if pd.isna(shp_code): return False
         name = str(shp_code).strip().upper()
-        
         for sl in sel_lines:
             sl_upper = str(sl).strip().upper()
-            
-            # 1. 傻瓜式直接包含
             if name == sl_upper or name in sl_upper or sl_upper in name: return True
-            
-            # 2. 提取核心数字 (1号线 -> 1, M1 -> 1)
             sl_num = sl_upper.replace("号线", "").replace("线", "")
             name_num = name.replace("M0", "").replace("M", "").replace("L", "").replace("号线", "").replace("线", "")
             if sl_num.isdigit() and name_num.isdigit() and sl_num == name_num: return True
-            
-            # 3. 翻译专线代号
             if "房山" in sl_upper and name == "FS": return True
             if "燕房" in sl_upper and name == "FS": return True
             if "昌平" in sl_upper and name == "CP": return True
@@ -171,101 +174,39 @@ if df_stations is not None and gdf_lines_cached is not None:
             if ("大兴机场" in sl_upper or "新机场" in sl_upper) and name == "DXJC": return True
             if "八通" in sl_upper and name == "M1": return True
             if "大兴线" in sl_upper and name == "M4": return True
-            
         return False
 
-    # 动态渲染线条颜色：选中的涂色，没选中的变成幽灵灰底色
     if selected_lines and line_name_col:
         render_lines['color'] = render_lines[line_name_col].apply(
             lambda x: get_line_color(x) if is_line_selected(x, selected_lines) else [200, 200, 200, 50]
         )
     else:
-        # 如果什么都没选，全网上色
         render_lines['color'] = render_lines[line_name_col].apply(get_line_color) if line_name_col else pd.Series([[100, 100, 100, 200]] * len(render_lines))
 
-    # 过滤车站气泡：只保留被选中线路的车站
-    if selected_lines:
-        mask = pd.Series(False, index=df_stations.index)
-        for col in ['轨道线路1', '轨道线路2', '轨道线路3']:
-            if col in df_stations.columns:
-                mask = mask | df_stations[col].isin(selected_lines)
-        filtered_stations = df_stations[mask].copy()
-    else:
-        filtered_stations = df_stations.copy()
-
-    # 根据客流量重新给气泡上色
+    filtered_stations = ana_df.copy() # 复用刚才分析的数据
     filtered_stations['color'] = filtered_stations[SAFE_COL].apply(
         lambda x: [255, 50, 50, 200] if x > 50000 else [50, 200, 50, 200]
     )
 
     st.title("🚇 轨道站点客流与线路可视化")
     
-    # 图层拼接
-    layer_lines = pdk.Layer(
-        "GeoJsonLayer",
-        render_lines,
-        get_line_color="color", 
-        get_line_width=25,      
-        line_width_min_pixels=3,
-        pickable=True,
-    )
-
-    layer_stations = pdk.Layer(
-        "ScatterplotLayer",
-        filtered_stations, 
-        get_position=["lon", "lat"],
-        get_color="color",
-        get_radius=SAFE_COL,   
-        radius_scale=0.02,      
-        radius_min_pixels=3,
-        pickable=True,
-    )
-
+    layer_lines = pdk.Layer("GeoJsonLayer", render_lines, get_line_color="color", get_line_width=25, line_width_min_pixels=3, pickable=True)
+    layer_stations = pdk.Layer("ScatterplotLayer", filtered_stations, get_position=["lon", "lat"], get_color="color", get_radius=SAFE_COL, radius_scale=0.02, radius_min_pixels=3, pickable=True)
     view_state = pdk.ViewState(latitude=39.92, longitude=116.40, zoom=9.5, pitch=0, bearing=0)
 
     st.pydeck_chart(pdk.Deck(
-        layers=[layer_lines, layer_stations],
-        initial_view_state=view_state,
-        map_style="light", 
-        tooltip={
-            "html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"
-        }
+        layers=[layer_lines, layer_stations], initial_view_state=view_state, map_style="light", 
+        tooltip={"html": "<b>📍 站点:</b> {stations} <br/> <b>🏙️ 区县:</b> {区县} <br/> <b>🚇 线路:</b> {所属线路} <br/> <b>🚶 进站量:</b> {volume} 人次"}
     ))
     
     # 🖼️ 左下角图例
     def get_base64_of_bin_file(bin_file):
         try:
-            with open(bin_file, 'rb') as f:
-                return base64.b64encode(f.read()).decode()
-        except:
-            return None
-
+            with open(bin_file, 'rb') as f: return base64.b64encode(f.read()).decode()
+        except: return None
     legend_base64 = get_base64_of_bin_file(DATA_DIR / "legend.png") or get_base64_of_bin_file(DATA_DIR / "legend.jpg")
-    
     if legend_base64:
         st.markdown(
-            f"""
-            <style>
-            .legend-container {{
-                position: fixed;
-                bottom: 40px;
-                left: 40px; 
-                z-index: 99999;
-                background-color: rgba(255, 255, 255, 0.85);
-                padding: 8px;
-                border-radius: 8px;
-                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-                backdrop-filter: blur(5px);
-                pointer-events: none;
-            }}
-            .legend-container img {{
-                max-height: 280px; 
-                object-fit: contain;
-            }}
-            </style>
-            <div class="legend-container">
-                <img src="data:image/png;base64,{legend_base64}">
-            </div>
-            """,
+            f"""<style>.legend-container {{ position: fixed; bottom: 40px; left: 40px; z-index: 99999; background-color: rgba(255, 255, 255, 0.85); padding: 8px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); backdrop-filter: blur(5px); pointer-events: none; }} .legend-container img {{ max-height: 280px; object-fit: contain; }} </style> <div class="legend-container"> <img src="data:image/png;base64,{legend_base64}"> </div>""",
             unsafe_allow_html=True
         )
