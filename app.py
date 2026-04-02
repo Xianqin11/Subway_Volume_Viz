@@ -16,23 +16,30 @@ DATA_DIR = BASE_DIR / "data"
 @st.cache_data(show_spinner="正在云端加载空间数据，请稍候...")
 def load_data():
     try:
-        # 1. 加载客流数据 (读取 Excel 文件)
+        # 1. 加载客流数据
         df_flow = pd.read_excel(DATA_DIR / "flow_static.xlsx")
         
-        # 2. 加载地理数据，并统一转换坐标系为 WGS84
+        # 2. 加载地理数据
         gdf_stations = gpd.read_file(DATA_DIR / "现状423座车站.shp").to_crs(epsg=4326)
         gdf_lines = gpd.read_file(DATA_DIR / "2025年底-线路909km-现状.shp").to_crs(epsg=4326)
         
+        # 记录下真实的列名，留作备用
+        real_columns = gdf_stations.columns.tolist()
+        
         # 3. 数据融合
-        # 【注意】：如果你接下来遇到 KeyError: 'NAME' 的红框报错，
-        # 就是因为地图里站名那一列不叫 'NAME'。到时候只要把这里的 'NAME' 改成正确的名字即可。
         merged_stations = gdf_stations.merge(df_flow, left_on='NAME', right_on='stations', how='inner')
         
-        # 提取经纬度供地图渲染
+        # 提取经纬度
         merged_stations['lon'] = merged_stations.geometry.x
         merged_stations['lat'] = merged_stations.geometry.y
         
         return merged_stations, gdf_lines
+        
+    except KeyError as e:
+        # 如果暗号不对，就把真实的列名打印到网页上
+        st.error("🚨 暗号没对上！地图里的站名那一列不叫 'NAME'。")
+        st.info(f"👉 侦察兵回报，你的地图文件里实际拥有的列名有：{real_columns}")
+        return None, None
     except Exception as e:
         st.error(f"数据加载出错啦: {e}")
         return None, None
